@@ -1,144 +1,147 @@
-// Game.cpp : This file contains the 'main' function. Program execution begins and ends there.
-//
-#include "core.h"
+#include "Game.h"
 #include "Math/MathStuff.h"
 #include "Math/Random.h"
 #include "Math/Color.h"
 #include "Math/Transform.h"
 #include "Graphics/shape.h"
+#include "Object/Actor.h"
+#include "Player.h"
+#include "Enemy.h"
+#include "Object/Scene.h"
+#include "Graphics/ParticleSystem.h"
 #include <iostream>
 #include <string>
+#include <list>
+#include <vector>
 
-const size_t NUM_POINTS = 40;
-float speed = 300.0f;
-
-std::vector<nc::Vector2> points = { { 0, -5 }, { 5, 5 }, { 0, 15 }, { -5, 5 }, { 0, -5 } };
-nc::Color color{ 1, 1, 1 };
-nc::Shape ship;
-//nc::Shape shape { points, color };
-
-nc::Transform transform{ { 400 , 300 }, 4, 0 };
-
-float frametime;
-float roundTime{ 0 };
-bool gameOver{ false };
-
-DWORD prevTime;
-DWORD deltaTime;
+std::list<nc::Actor*> actors; //need to get rid of this
 
 
-
-bool Update(float dt)
+void Game::Startup()
 {
-	DWORD time = GetTickCount();
-	deltaTime = time - prevTime;
-	prevTime = time;
+	g_particleSystem.Startup();
+	m_scene.Startup();
+	m_scene.SetGame(this);
+}
 
+void Game::Shutdown()
+{
+	m_scene.Shutdown();
+	g_particleSystem.Shutdown();
+}
+
+bool Game::Update(float dt)
+{
 	frametime = dt;
-	roundTime += dt;
-	if (roundTime >= 15)
-	{
-		gameOver = true;
-	}
-
-	if (Core::Input::IsPressed(Core::Input::KEY_DOWN)) {
-		dt = dt * 0.5f;
-	}
-
-	if (gameOver) dt = dt * 0.0f;
-
 	bool quit = Core::Input::IsPressed(Core::Input::KEY_ESCAPE);
 
-	int x;
-	int y;
-	Core::Input::GetMousePos(x, y);
+	switch (m_state)
+	{
+	case Game::eState::INIT:
+		break;
+	case Game::eState::TITLE:
+		if (Core::Input::IsPressed(VK_SPACE))
+		{
+			m_state = eState::STARTGAME;
+		}
+		break;
+	case Game::eState::STARTGAME:
+	{
+		Player* player = new Player;
+		player->Load("Player.txt");
+		m_scene.AddActor(player);
+		for (int i = 0; i < 50; i++)
+		{
+			nc::Actor* enemy = new Enemy;
+			enemy->Load("Enemy.txt");
+			dynamic_cast<Enemy*>(enemy)->SetTarget(player);
+			enemy->GetTransform().position = nc::Vector2{ nc::random(0,800), nc::random(0,600) };
+			dynamic_cast<Enemy*>(enemy)->SetThrust(nc::random(50, 125));
+			m_scene.AddActor(enemy);
+		}
+		m_state = eState::GAME;
+	}
+		break;
+	case Game::eState::GAME:
+		m_scene.Update(dt);
+		spawntimer += dt;
+		if (spawntimer >= 3.0f)
+		{
+			spawntimer = 0;
 
-	//nc::Vector2 target = nc::Vector2{ x, y };
-	//nc::Vector2 direction = target - position;
-	//direction.Normalize();
+			Enemy* enemy = new Enemy;
+			enemy->Load("enemy.txt");
+			enemy->SetTarget(m_scene.GetActor<Player>());
+			enemy->GetTransform().position = nc::Vector2{ nc::random(0, 800), nc::random(0, 600) };
+			m_scene.AddActor(enemy);
+		}
+		break;
+	case Game::eState::GOMEOVER:
+		break;
+	default:
+		break;
+	}
 
-	nc::Vector2 force;
+	if (Core::Input::IsPressed(Core::Input::BUTTON_LEFT))
+	{
+		int x, y;
+		Core::Input::GetMousePos(x, y);
+		nc::Color colors[] = { nc::Color::white, nc::Color::blue, nc::Color::yellow };
+		nc::Color color = colors[rand() % 3];
 
-	if (Core::Input::IsPressed('W')) { force = nc::Vector2::forward * speed * dt; }
-	nc::Vector2 direction = force;
-	direction = nc::Vector2::Rotatate(direction, transform.angle);
-	transform.position = transform.position + direction;
+		g_particleSystem.Create(nc::Vector2{ x, y }, 0, 180, 30, color, 1, 100, 200);
 
-	if (Core::Input::IsPressed('A')) { transform.angle = transform.angle - dt * 5; }
-	if (Core::Input::IsPressed('D')) { transform.angle = transform.angle + dt * 5; }
+	}
 
+	for (nc::Actor* actor : actors)
+	{
+		actor->Update(dt);
+	}
 
-
-	//if (Core::Input::IsPressed('A')) position += nc::Vector2::left * speed * dt;
-	//if (Core::Input::IsPressed('D')) position += nc::Vector2::right * speed * dt;
-	//if (Core::Input::IsPressed('W')) position += nc::Vector2::up * speed * dt;
-	//if (Core::Input::IsPressed('S')) position += nc::Vector2::down * speed * dt;
-
-	//for (nc::Vector2& point : points) {
-		//point = { nc::random(-10.0f, 10.0f), nc::random(-10.0f, 10.0f) };
-	//}
+	g_particleSystem.Update(dt);
+	m_scene.Update(dt);
 
 	return quit;
 }
 
-void Draw(Core::Graphics& graphics)
+void Game::Draw(Core::Graphics& graphics)
 {
-
-	ship.Draw(graphics, transform.position, transform.scale, transform.angle);
-
-	if (gameOver) graphics.DrawString(400, 300, "game over");
-
-	graphics.DrawString(10, 30, std::to_string(deltaTime).c_str());
-
-/*
-	graphics.DrawString(10, 10, std::to_string(frametime).c_str());
-	graphics.DrawString(10, 20, std::to_string(1 / frametime).c_str());
-
-	graphics.SetColor(color.pack888());
-	//graphics.DrawLine(static_cast<float>(rand() % 800), static_cast<float>(rand() % 600), static_cast<float>(rand() % 800), static_cast<float>(rand() % 600));
-
-	for (size_t i = 0; i < points.size() - 1; i++)
+	for (nc::Actor* actor : actors)
 	{
-		//local / object space points
-		nc::Vector2 p1 = points[i];
-		nc::Vector2 p2 = points[i + 1];
-
-		p1 = p1 * scale;
-		p2 = p2 * scale;
-
-		p1 = nc::Vector2::Rotatate(p1, angle);
-		p2 = nc::Vector2::Rotatate(p2, angle);
-		
-		p1 = p1 + position;
-		p2 = p2 + position;
-
-
-		graphics.DrawLine(p1.x, p1.y, p2.x, p2.y);
+		actor->Draw(graphics);
 	}
-	*/
 
+	
+	g_particleSystem.Draw(graphics);
 
+	switch (m_state)
+	{
+	case Game::eState::INIT:
+		break;
+	case Game::eState::TITLE:
+		graphics.SetColor(nc::Color::green);
+		graphics.DrawString(250, 300, "SPAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACE");
+		break;
+	case Game::eState::STARTGAME:
+		break;
+	case Game::eState::GAME:
+		m_scene.Draw(graphics);
+		graphics.SetColor(nc::Color::white);
+		graphics.DrawString(700, 40, std::to_string(m_score).c_str());
+		break;
+	case Game::eState::GOMEOVER:
+		graphics.SetColor(nc::Color::green);
+		graphics.DrawString(250, 300, "GAME OVER");
+		break;
+	default:
+		break;
+	}
+
+	float v = (std::sin(t) + 1.0f);
+
+	nc::Color c = nc::Lerp(nc::Color{ 0, 0, 1 }, nc::Color{ 1, 0, 0 }, v);
+	graphics.SetColor(c);
+
+	nc::Vector2 p = nc::Lerp(nc::Vector2{ 400, 300 }, nc::Vector2{ 400 , 100 }, v);
+	graphics.DrawString(p.x, p.y, "Last Stawfightew");
 }
-
-int main()
-{
-	DWORD ticks = GetTickCount();
-	std::cout << ticks / 1000 / 60 / 60 << std::endl;
-	//for (size_t i = 0; i < NUM_POINTS; i++) {
-		//points.push_back(nc::Vector2{ nc::random(0.0f, 800.0f), nc::random(0.0f, 600.0f) });
-	//}
-
-	//ship.SetColor(nc::Color{ 1,1,1 });
-	ship.load("shape.txt");
-
-	prevTime = GetTickCount();
-
-	char name[] = "CSC196";
-	Core::Init(name, 800, 600);
-	Core::RegisterUpdateFn(Update);
-	Core::RegisterDrawFn(Draw);
-
-	Core::GameLoop();
-	Core::Shutdown();
-}
-
